@@ -3,10 +3,11 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>位置驗證</title>
+    <title>巡邏箱打卡驗證</title>
     <style>
         body { font-family: "Microsoft JhengHei", Arial, sans-serif; text-align: center; padding: 40px 20px; }
         .status { margin-top: 20px; font-size: 1.1em; color: #333; line-height: 1.6; }
+        .box-info { font-weight: bold; color: #0056b3; margin-bottom: 15px; font-size: 1.2em; }
         .error { color: #d9534f; font-weight: bold; }
         .success { color: #5cb85c; font-weight: bold; }
         button { padding: 10px 20px; font-size: 1rem; margin-top: 20px; cursor: pointer; }
@@ -14,45 +15,65 @@
 </head>
 <body>
 
-    <h2>📍 現場簽到驗證</h2>
+    <h2>👮 巡邏箱打卡系統</h2>
+    
+    <div id="boxDisplay" class="box-info">正在讀取箱號...</div>
+
     <div id="message" class="status">請允許定位權限以進行驗證...</div>
     <button id="retryBtn" onclick="startLocationCheck()" style="display:none;">重新定位</button>
 
-	<script>
+    <script>
         // ================= 設定區 (請修改這裡) =================
         
-        // 1. 您的 Google 問卷 "Base" 網址 (注意：不要包含 ? 後面的東西)
-        const GOOGLE_FORM_BASE_URL = "https://docs.google.com/forms/d/e/1FAIpQLSfDJtEH3sZFseTSuwYf0VqOxasKRu-Pu_9jUdbTlK9hwt2CDQ/viewform";
+        // 1. 您的 Google 問卷 "Base" 網址
+        const GOOGLE_FORM_BASE_URL = "https://docs.google.com/forms/d/e/您的問卷ID/viewform";
         
-        // 2. Google 表單欄位 ID (請填入您第一步查到的數字)
+        // 2. Google 表單欄位 ID 設定
         const FORM_FIELDS = {
-			NUM: "entry.865685784", // 巡邏箱號碼 ID
-            LAT: "entry.1647830097",   // 填入 "緯度" 的 ID
-            LON: "entry.492334172",   // 填入 "經度" 的 ID
-            STATUS: "entry.1139328085" // 填入 "驗證結果" 的 ID
+            LAT: "entry.1647830097",      // 填入 "緯度" ID
+            LON: "entry.492334172",      // 填入 "經度" ID
+            STATUS: "entry.1139328085",   // 填入 "驗證結果" ID
+            BOX_ID: "entry.865685784" // ★ 填入 "巡邏箱號碼" ID
         };
 
-        // 3. 目標地點經緯度
-        const TARGET_LAT = 24.072195165135017;
-        const TARGET_LON = 120.55587141858645;
-        const ALLOWED_RADIUS = 20; // 公尺
+        // 3. 目標地點經緯度 (範例)
+        const TARGET_LAT = 25.033964;
+        const TARGET_LON = 121.564468;
+        const ALLOWED_RADIUS = 50; // 公尺
         
         // ======================================================
 
-        window.onload = startLocationCheck;
+        // 全域變數存箱號
+        let currentBoxId = "未指定";
+
+        window.onload = function() {
+            // 步驟 A: 先從網址取得箱號參數 (?box=XXX)
+            const urlParams = new URLSearchParams(window.location.search);
+            if (urlParams.has('box')) {
+                currentBoxId = urlParams.get('box');
+                document.getElementById("boxDisplay").innerHTML = "📍 目標巡邏箱： " + currentBoxId;
+            } else {
+                document.getElementById("boxDisplay").innerHTML = "⚠️ 警告：網址未包含箱號參數";
+                document.getElementById("boxDisplay").style.color = "red";
+            }
+
+            // 步驟 B: 開始定位
+            startLocationCheck();
+        };
 
         function startLocationCheck() {
-            // (這部分的代碼與上一版相同，省略以節省篇幅...)
             const msgDiv = document.getElementById("message");
             const btn = document.getElementById("retryBtn");
+            
             btn.style.display = "none";
-            msgDiv.innerHTML = "正在讀取您的 GPS 座標...";
+            msgDiv.innerHTML = "正在讀取 GPS 座標...";
             msgDiv.className = "status";
 
             if (!navigator.geolocation) {
-                msgDiv.innerHTML = "您的瀏覽器不支援定位功能。";
+                msgDiv.innerHTML = "瀏覽器不支援定位。";
                 return;
             }
+
             navigator.geolocation.getCurrentPosition(success, error, {
                 enableHighAccuracy: true, timeout: 10000, maximumAge: 0
             });
@@ -67,45 +88,43 @@
             const distance = getDistanceFromLatLonInKm(userLat, userLon, TARGET_LAT, TARGET_LON) * 1000;
 
             if (distance <= ALLOWED_RADIUS) {
-                msgDiv.innerHTML = "✅ 驗證成功！正在寫入位置資訊並跳轉...";
+                msgDiv.innerHTML = "✅ 驗證成功！正在寫入資料並跳轉...";
                 msgDiv.className = "status success";
                 
-                // --- 這裡是最新的修改 ---
-                
-                // 1. 準備要填入的參數
+                // --- 組合網址參數 ---
                 const params = new URLSearchParams();
-                params.append("usp", "pp_url"); // Google Form 固定參數
-				params.append(FORM_FIELDS.NUM,"1"); //巡邏箱1號
-                params.append(FORM_FIELDS.LAT, userLat.toFixed(6)); // 填入緯度 (取小數6位)
-                params.append(FORM_FIELDS.LON, userLon.toFixed(6)); // 填入經度
-                params.append(FORM_FIELDS.STATUS, "驗證通過 (距離: " + Math.round(distance) + "m)"); // 填入狀態
+                params.append("usp", "pp_url");
+                params.append(FORM_FIELDS.LAT, userLat.toFixed(6));
+                params.append(FORM_FIELDS.LON, userLon.toFixed(6));
+                params.append(FORM_FIELDS.STATUS, "Pass (" + Math.round(distance) + "m)");
+                
+                // ★ 關鍵：將網址抓到的箱號，填入 Google 表單
+                params.append(FORM_FIELDS.BOX_ID, currentBoxId);
 
-                // 2. 組合最終網址
                 const finalUrl = `${GOOGLE_FORM_BASE_URL}?${params.toString()}`;
 
-                // 3. 跳轉
                 setTimeout(() => {
                     window.location.replace(finalUrl);
                 }, 1000);
 
             } else {
-                // 驗證失敗時，通常不建議跳轉到問卷，直接擋在門外
-                msgDiv.innerHTML = `❌ 驗證失敗。<br>您距離目標還有 ${Math.round(distance)} 公尺。<br>無法開啟問卷。`;
+                msgDiv.innerHTML = `❌ 驗證失敗 (距離 ${Math.round(distance)} 公尺)。<br>請靠近巡邏箱後再試。`;
                 msgDiv.className = "status error";
                 document.getElementById("retryBtn").style.display = "inline-block";
             }
         }
 
-        // (Error 函式與 Haversine 公式保持不變...)
-        function error(err) { /* ...同上一版... */ 
-             document.getElementById("message").innerHTML = "定位失敗";
-             document.getElementById("retryBtn").style.display = "inline-block";
+        function error(err) {
+            document.getElementById("message").innerHTML = "定位失敗，請檢查手機 GPS 設定。";
+            document.getElementById("message").className = "status error";
+            document.getElementById("retryBtn").style.display = "inline-block";
         }
-        function getDistanceFromLatLonInKm(lat1, lon1, lat2, lon2) { /* ...同上一版... */ 
-             // 這裡請複製上一版的 Haversine 公式代碼
-             var R = 6371; var dLat = deg2rad(lat2-lat1); var dLon = deg2rad(lon2-lon1); 
-             var a = Math.sin(dLat/2) * Math.sin(dLat/2) + Math.cos(deg2rad(lat1)) * Math.cos(deg2rad(lat2)) * Math.sin(dLon/2) * Math.sin(dLon/2); 
-             var c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a)); return R * c;
+
+        // Haversine 公式
+        function getDistanceFromLatLonInKm(lat1, lon1, lat2, lon2) {
+            var R = 6371; var dLat = deg2rad(lat2-lat1); var dLon = deg2rad(lon2-lon1); 
+            var a = Math.sin(dLat/2) * Math.sin(dLat/2) + Math.cos(deg2rad(lat1)) * Math.cos(deg2rad(lat2)) * Math.sin(dLon/2) * Math.sin(dLon/2); 
+            var c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a)); return R * c;
         }
         function deg2rad(deg) { return deg * (Math.PI/180) }
     </script>
