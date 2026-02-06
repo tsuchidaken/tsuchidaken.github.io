@@ -26,6 +26,7 @@
         
         // 2. Google 表單欄位 ID (請填入您第一步查到的數字)
         const FORM_FIELDS = {
+			NUM: "entry.865685784", // 巡邏箱號碼 ID
             LAT: "entry.1647830097",   // 填入 "緯度" 的 ID
             LON: "entry.492334172",   // 填入 "經度" 的 ID
             STATUS: "entry.1139328085" // 填入 "驗證結果" 的 ID
@@ -74,6 +75,7 @@
                 // 1. 準備要填入的參數
                 const params = new URLSearchParams();
                 params.append("usp", "pp_url"); // Google Form 固定參數
+				params.append(FORM_FIELDS.NUM,"1"); //巡邏箱1號
                 params.append(FORM_FIELDS.LAT, userLat.toFixed(6)); // 填入緯度 (取小數6位)
                 params.append(FORM_FIELDS.LON, userLon.toFixed(6)); // 填入經度
                 params.append(FORM_FIELDS.STATUS, "驗證通過 (距離: " + Math.round(distance) + "m)"); // 填入狀態
