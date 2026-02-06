@@ -1,0 +1,146 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>位置驗證</title>
+    <style>
+        body { font-family: "Microsoft JhengHei", Arial, sans-serif; text-align: center; padding: 40px 20px; }
+        .status { margin-top: 20px; font-size: 1.1em; color: #333; }
+        .error { color: #d9534f; font-weight: bold; }
+        .success { color: #5cb85c; font-weight: bold; }
+        button { padding: 10px 20px; font-size: 1rem; margin-top: 20px; cursor: pointer; }
+    </style>
+</head>
+<body>
+
+    <h2>📍 現場簽到驗證</h2>
+    <div id="message" class="status">請允許定位權限以進行驗證...</div>
+    <button id="retryBtn" onclick="startLocationCheck()" style="display:none;">重新定位</button>
+
+    <script>
+        // ================= 設定區 (請修改這裡) =================
+        
+        // 1. Google Apps Script 網址 (Part A 產生的那串網址)
+        const LOG_API_URL = "https://script.google.com/macros/s/AKfycbxm_4i3st34vhG4uWoSYTdgjKSTT5G1TCRrFI7Twbs9vMncHVulXy4ISVe_3uY1pxR2/exec";
+
+        // 2. Google 問卷設定
+        const GOOGLE_FORM_BASE_URL = "https://docs.google.com/forms/d/e/1FAIpQLSfDJtEH3sZFseTSuwYf0VqOxasKRu-Pu_9jUdbTlK9hwt2CDQ/viewform";
+        const FORM_FIELDS = {
+            LAT: "entry.1647830097",   
+            LON: "entry.492334172",   
+            STATUS: "entry.1139328085" 
+        };
+
+        // 3. 地點設定
+        const TARGET_LAT = 24.072195165135017;
+        const TARGET_LON = 120.55587141858645;
+        const ALLOWED_RADIUS = 20; 
+        
+        // ======================================================
+
+        window.onload = startLocationCheck;
+
+        function startLocationCheck() {
+            const msgDiv = document.getElementById("message");
+            const btn = document.getElementById("retryBtn");
+            btn.style.display = "none";
+            msgDiv.innerHTML = "正在讀取座標...";
+            msgDiv.className = "status";
+
+            if (!navigator.geolocation) {
+                msgDiv.innerHTML = "瀏覽器不支援定位。";
+                // 記錄不支援的情況
+                sendLogToSheet(0, 0, "Fail", "瀏覽器不支援定位");
+                return;
+            }
+
+            navigator.geolocation.getCurrentPosition(success, error, {
+                enableHighAccuracy: true, timeout: 10000, maximumAge: 0
+            });
+        }
+
+        function success(position) {
+            const userLat = position.coords.latitude;
+            const userLon = position.coords.longitude;
+            const msgDiv = document.getElementById("message");
+
+            // 計算距離
+            const distance = getDistanceFromLatLonInKm(userLat, userLon, TARGET_LAT, TARGET_LON) * 1000;
+            const distInt = Math.round(distance);
+
+            if (distance <= ALLOWED_RADIUS) {
+                msgDiv.innerHTML = "✅ 驗證成功！正在記錄資料並跳轉...";
+                msgDiv.className = "status success";
+
+                // 1. 背景傳送 Log 到 Google Sheet (成功)
+                sendLogToSheet(userLat, userLon, "Success", `距離: ${distInt}m`);
+
+                // 2. 準備問卷跳轉
+                const params = new URLSearchParams();
+                params.append("usp", "pp_url");
+                params.append(FORM_FIELDS.LAT, userLat.toFixed(6));
+                params.append(FORM_FIELDS.LON, userLon.toFixed(6));
+                params.append(FORM_FIELDS.STATUS, `驗證通過:距離約 (${distInt}m)`);
+                
+                setTimeout(() => {
+                    window.location.replace(`${GOOGLE_FORM_BASE_URL}?${params.toString()}`);
+                }, 1500);
+
+            } else {
+                msgDiv.innerHTML = `❌ 驗證失敗。<br>距離目標還有 ${distInt} 公尺。<br>已記錄您的位置，請勿嘗試作弊。`;
+                msgDiv.className = "status error";
+                document.getElementById("retryBtn").style.display = "inline-block";
+
+                // 1. 背景傳送 Log 到 Google Sheet (失敗)
+                sendLogToSheet(userLat, userLon, "Fail", `距離過遠: ${distInt}m`);
+            }
+        }
+
+        function error(err) {
+            const msgDiv = document.getElementById("message");
+            msgDiv.className = "status error";
+            let note = "未知錯誤";
+            if (err.code === 1) note = "拒絕權限";
+            else if (err.code === 2) note = "訊號不良";
+            else if (err.code === 3) note = "逾時";
+
+            msgDiv.innerHTML = `定位失敗 (${note})`;
+            document.getElementById("retryBtn").style.display = "inline-block";
+
+            // 記錄定位失敗
+            sendLogToSheet(0, 0, "Error", note);
+        }
+
+        // --- 核心功能：傳送 Log 到 GAS ---
+        function sendLogToSheet(lat, lon, status, note) {
+            if (LOG_API_URL.includes("您的長長一串ID")) return; // 防止未設定網址報錯
+
+            // 使用 fetch 發送 POST 請求
+            // mode: 'no-cors' 很重要，因為 Google Script 回傳時會有跨網域問題
+            // 使用 no-cors 我們雖然收不到回應，但資料會成功送達
+            fetch(LOG_API_URL, {
+                method: 'POST',
+                mode: 'no-cors', 
+                headers: {
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify({
+                    lat: lat,
+                    lon: lon,
+                    status: status,
+                    note: note
+                })
+            }).catch(err => console.error("Log failed:", err));
+        }
+
+        // Haversine 公式
+        function getDistanceFromLatLonInKm(lat1, lon1, lat2, lon2) {
+            var R = 6371; var dLat = deg2rad(lat2-lat1); var dLon = deg2rad(lon2-lon1); 
+            var a = Math.sin(dLat/2) * Math.sin(dLat/2) + Math.cos(deg2rad(lat1)) * Math.cos(deg2rad(lat2)) * Math.sin(dLon/2) * Math.sin(dLon/2); 
+            var c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a)); return R * c;
+        }
+        function deg2rad(deg) { return deg * (Math.PI/180) }
+    </script>
+</body>
+</html>
