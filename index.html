@@ -1,4 +1,24 @@
-<script>
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>位置驗證</title>
+    <style>
+        body { font-family: "Microsoft JhengHei", Arial, sans-serif; text-align: center; padding: 40px 20px; }
+        .status { margin-top: 20px; font-size: 1.1em; color: #333; line-height: 1.6; }
+        .error { color: #d9534f; font-weight: bold; }
+        .success { color: #5cb85c; font-weight: bold; }
+        button { padding: 10px 20px; font-size: 1rem; margin-top: 20px; cursor: pointer; }
+    </style>
+</head>
+<body>
+
+    <h2>📍 現場簽到驗證</h2>
+    <div id="message" class="status">請允許定位權限以進行驗證...</div>
+    <button id="retryBtn" onclick="startLocationCheck()" style="display:none;">重新定位</button>
+
+	<script>
         // ================= 設定區 (請修改這裡) =================
         
         // 1. 您的 Google 問卷 "Base" 網址 (注意：不要包含 ? 後面的東西)
@@ -87,3 +107,5 @@
         }
         function deg2rad(deg) { return deg * (Math.PI/180) }
     </script>
+</body>
+</html>
