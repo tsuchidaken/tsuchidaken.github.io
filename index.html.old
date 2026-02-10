@@ -1,0 +1,176 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>巡邏箱簽到</title>
+    <style>
+        body { font-family: "Microsoft JhengHei", Arial, sans-serif; text-align: center; padding: 40px 20px; }
+        .status { margin-top: 20px; font-size: 1.1em; color: #333; }
+        .box-info { background: #e3f2fd; padding: 15px; border-radius: 8px; margin: 15px 0; color: #0d47a1; border: 1px solid #90caf9;}
+        .error { color: #d9534f; font-weight: bold; }
+        .success { color: #5cb85c; font-weight: bold; }
+        .loading { color: #ff9800; font-weight: bold; }
+        button { padding: 10px 20px; font-size: 1rem; margin-top: 20px; cursor: pointer; }
+    </style>
+</head>
+<body>
+
+    <h2>📍 巡邏箱智慧簽到</h2>
+    
+    <div id="boxDisplay" class="box-info">正在讀取巡邏箱資訊...</div>
+    <div id="message" class="status">系統初始化中...</div>
+    <button id="retryBtn" onclick="initSystem()" style="display:none;">重試</button>
+
+    <script>
+        // ================= 設定區 =================
+        const GAS_API_URL = "https://script.google.com/macros/s/AKfycbxm_4i3st34vhG4uWoSYTdgjKSTT5G1TCRrFI7Twbs9vMncHVulXy4ISVe_3uY1pxR2/exec";
+        const GOOGLE_FORM_BASE_URL = "https://docs.google.com/forms/d/e/1FAIpQLSfDJtEH3sZFseTSuwYf0VqOxasKRu-Pu_9jUdbTlK9hwt2CDQ/viewform";
+        
+        const FORM_FIELDS = {
+            LAT: "entry.1647830097",      
+            LON: "entry.492334172",      
+            STATUS: "entry.1139328085",   
+            BOX_ID: "entry.865685784"   
+        };
+
+        const ALLOWED_RADIUS = 20; // 允許誤差 (公尺)
+        // =========================================
+
+        // 全域變數，用來存從 Sheet 抓下來的目標座標
+        let TARGET_LAT = 0;
+        let TARGET_LON = 0;
+        let BOX_NAME = "";
+        
+        // 取得網址上的 box_id
+        const urlParams = new URLSearchParams(window.location.search);
+        const CURRENT_BOX_ID = urlParams.get('box_id');
+
+        window.onload = initSystem;
+
+        // 第一步：初始化系統，去後端抓座標
+        function initSystem() {
+            const display = document.getElementById("boxDisplay");
+            const msg = document.getElementById("message");
+            const btn = document.getElementById("retryBtn");
+            
+            btn.style.display = "none";
+
+            if (!CURRENT_BOX_ID) {
+                display.innerHTML = "❌ 錯誤：網址未包含 box_id";
+                msg.innerHTML = "請掃描正確的 NFC 標籤。";
+                msg.className = "status error";
+                return;
+            }
+
+            display.innerHTML = `正在查詢巡邏箱資料 (${CURRENT_BOX_ID})...`;
+            msg.innerHTML = '<span class="loading">連線資料庫中...</span>';
+
+            // 呼叫 GAS 的 doGet 查詢座標
+            fetch(`${GAS_API_URL}?box_id=${CURRENT_BOX_ID}`)
+            .then(response => response.json())
+            .then(data => {
+                if (data.status === "success") {
+                    // 成功抓到座標
+                    TARGET_LAT = Number(data.lat);
+                    TARGET_LON = Number(data.lon);
+                    BOX_NAME = data.name || "未命名地點";
+                    
+                    display.innerHTML = `📦 地點：${BOX_NAME} (${CURRENT_BOX_ID})`;
+                    // 開始進行 GPS 定位
+                    startLocationCheck();
+                } else {
+                    // ID 不存在
+                    display.innerHTML = `❌ 無效的箱號：${CURRENT_BOX_ID}`;
+                    msg.innerHTML = "資料庫中找不到此 ID，請聯絡管理員。";
+                    msg.className = "status error";
+                }
+            })
+            .catch(err => {
+                console.error(err);
+                display.innerHTML = "⚠️ 連線錯誤";
+                msg.innerHTML = "無法連接資料庫，請檢查網路。";
+                btn.style.display = "inline-block";
+            });
+        }
+
+        // 第二步：開始定位
+        function startLocationCheck() {
+            const msgDiv = document.getElementById("message");
+            msgDiv.innerHTML = "資料已同步，正在讀取您的 GPS...";
+            msgDiv.className = "status";
+
+            if (!navigator.geolocation) {
+                msgDiv.innerHTML = "瀏覽器不支援定位。";
+                sendLogToSheet(0, 0, "Fail", "瀏覽器不支援");
+                return;
+            }
+
+            navigator.geolocation.getCurrentPosition(success, error, {
+                enableHighAccuracy: true, timeout: 10000, maximumAge: 0
+            });
+        }
+
+        // 第三步：比對並處理結果
+        function success(position) {
+            const userLat = position.coords.latitude;
+            const userLon = position.coords.longitude;
+            const msgDiv = document.getElementById("message");
+
+            // 使用動態抓取到的 TARGET_LAT 比對
+            const distance = getDistanceFromLatLonInKm(userLat, userLon, TARGET_LAT, TARGET_LON) * 1000;
+            const distInt = Math.round(distance);
+
+            if (distance <= ALLOWED_RADIUS) {
+                msgDiv.innerHTML = "✅ 驗證成功！正在簽到...";
+                msgDiv.className = "status success";
+
+                sendLogToSheet(userLat, userLon, "Success", `地點:${BOX_NAME} / 距離:${distInt}m`);
+
+                const params = new URLSearchParams();
+                params.append("usp", "pp_url");
+                params.append(FORM_FIELDS.LAT, userLat.toFixed(6));
+                params.append(FORM_FIELDS.LON, userLon.toFixed(6));
+                params.append(FORM_FIELDS.STATUS, `驗證通過 落差距離約: (${distInt}m)`);
+                params.append(FORM_FIELDS.BOX_ID, CURRENT_BOX_ID);
+                
+                setTimeout(() => {
+                    window.location.replace(`${GOOGLE_FORM_BASE_URL}?${params.toString()}`);
+                }, 1500);
+
+            } else {
+                msgDiv.innerHTML = `❌ 位置不符。<br>您在「${BOX_NAME}」的範圍外 (差 ${distInt} 公尺)。`;
+                msgDiv.className = "status error";
+                document.getElementById("retryBtn").style.display = "inline-block";
+
+                sendLogToSheet(userLat, userLon, "Fail", `地點:${BOX_NAME} / 距離過遠:${distInt}m`);
+            }
+        }
+
+        function error(err) {
+            const msgDiv = document.getElementById("message");
+            msgDiv.innerHTML = "GPS 定位失敗，請確保在戶外並開啟權限。";
+            msgDiv.className = "status error";
+            document.getElementById("retryBtn").style.display = "inline-block";
+            sendLogToSheet(0, 0, "Error", `GPS Error / 地點:${BOX_NAME}`);
+        }
+
+        // 傳送 Log (POST)
+        function sendLogToSheet(lat, lon, status, note) {
+            fetch(GAS_API_URL, {
+                method: 'POST',
+                mode: 'no-cors', 
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ lat: lat, lon: lon, status: status, note: note })
+            });
+        }
+
+        function getDistanceFromLatLonInKm(lat1, lon1, lat2, lon2) {
+            var R = 6371; var dLat = deg2rad(lat2-lat1); var dLon = deg2rad(lon2-lon1); 
+            var a = Math.sin(dLat/2) * Math.sin(dLat/2) + Math.cos(deg2rad(lat1)) * Math.cos(deg2rad(lat2)) * Math.sin(dLon/2) * Math.sin(dLon/2); 
+            var c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a)); return R * c;
+        }
+        function deg2rad(deg) { return deg * (Math.PI/180) }
+    </script>
+</body>
+</html>
